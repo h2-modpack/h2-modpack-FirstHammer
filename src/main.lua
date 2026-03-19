@@ -13,7 +13,7 @@ local lib = mods['adamant-Modpack_Lib']
 config = chalk.auto('config.lua')
 public.config = config
 
-local backup, restore = lib.createBackupSystem()
+local backup, revert = lib.createBackupSystem()
 
 -- =============================================================================
 -- MODULE DEFINITION
@@ -418,8 +418,8 @@ local staging, snapshotStaging, syncToConfig =
 -- PUBLIC API (generic special module contract)
 -- =============================================================================
 
-public.definition.enable = apply
-public.definition.disable = restore
+public.definition.apply = apply
+public.definition.revert = revert
 
 public.SnapshotStaging    = snapshotStaging
 public.SyncToConfig       = syncToConfig
@@ -469,7 +469,7 @@ rom.gui.add_imgui(function()
         local val, chg = rom.ImGui.Checkbox("Enabled", config.Enabled)
         if chg then
             config.Enabled = val
-            if val then apply() else restore() end
+            if val then apply() else revert() end
         end
         rom.ImGui.Separator()
         rom.ImGui.Spacing()
