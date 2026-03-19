@@ -8,7 +8,7 @@ game = rom.game
 modutil = mods['SGG_Modding-ModUtil']
 chalk = mods['SGG_Modding-Chalk']
 reload = mods['SGG_Modding-ReLoad']
-local lib = mods['adamant-Modpack_Lib'].public
+local lib = mods['adamant-Modpack_Lib']
 
 config = chalk.auto('config.lua')
 public.config = config
@@ -22,12 +22,14 @@ local backup, restore = lib.createBackupSystem()
 public.definition = {
     id       = "FirstHammer",
     name     = "First Hammer Selection",
+    tabLabel = "Hammers",
     category = "RunModifiers",
     group    = "Hammers",
     tooltip  = "Select the guaranteed first hammer for each weapon aspect.",
     default  = false,
     special  = true,
     dataMutation = false,
+    -- stateSchema is set below after data tables are built
 }
 
 -- =============================================================================
@@ -258,7 +260,7 @@ end
 
 local function registerHooks()
     modutil.mod.Path.Wrap("StartNewRun", function(baseFunc, prevRun, args)
-        if config.Enabled then
+        if lib.isEnabled(config) then
             hasForcedHammerThisRun = false
         end
         return baseFunc(prevRun, args)
@@ -267,7 +269,7 @@ local function registerHooks()
     modutil.mod.Path.Wrap("SetTraitsOnLoot", function(baseFunc, lootData, args)
         baseFunc(lootData, args)
 
-        if not config.Enabled then return end
+        if not lib.isEnabled(config) then return end
         if lootData.Name ~= "WeaponUpgrade" or hasForcedHammerThisRun then return end
 
         local currentWeapon = GetEquippedAspect()
@@ -285,7 +287,7 @@ local function registerHooks()
 
     modutil.mod.Path.Wrap("AddTraitToHero", function(baseFunc, args)
         args = args or {}
-        if not config.Enabled then return baseFunc(args) end
+        if not lib.isEnabled(config) then return baseFunc(args) end
 
         local traitName = args.TraitData and args.TraitData.Name
         if traitName then
@@ -321,13 +323,18 @@ local function BuildLocalizedLabels()
     hasLocalizedLabels = true
 end
 
-local function DrawHammerDropdown(ui, aspectKey, displayLabel, staging, onChanged)
+--- Optional theme table (Core.Theme when hosted, nil when standalone).
+--- Modules pick the keys they need, falling back to baked-in defaults.
+local function DrawHammerDropdown(ui, aspectKey, displayLabel, staging, onChanged, theme)
     local data = hammerData[aspectKey]
     if not data then return end
 
     if not hasLocalizedLabels then
         BuildLocalizedLabels()
     end
+
+    local labelOffset = (theme and theme.LABEL_OFFSET) or 0.25
+    local fieldWidth  = (theme and theme.FIELD_MEDIUM)  or 0.4
 
     local currentId = staging.FirstHammers[aspectKey] or ""
     local currentIndex = 1
@@ -343,8 +350,8 @@ local function DrawHammerDropdown(ui, aspectKey, displayLabel, staging, onChange
     ui.PushID(aspectKey)
     ui.Text(displayLabel)
     ui.SameLine()
-    ui.SetCursorPosX(ui.GetWindowWidth() * 0.25)
-    ui.PushItemWidth(ui.GetWindowWidth() * 0.4)
+    ui.SetCursorPosX(ui.GetWindowWidth() * labelOffset)
+    ui.PushItemWidth(ui.GetWindowWidth() * fieldWidth)
     if ui.BeginCombo("##HammerCombo", currentPreview) then
         for i, txt in ipairs(data.labels) do
             local isSelected = (i == currentIndex)
@@ -361,20 +368,16 @@ local function DrawHammerDropdown(ui, aspectKey, displayLabel, staging, onChange
     ui.PopID()
 end
 
-local function DrawQuickSelect(ui, staging, onChanged)
+local function DrawQuickSelect(ui, staging, onChanged, theme)
     local currentWeapon = GetEquippedAspect()
     local weaponNameLabel = aspectLabels[currentWeapon] or "Unknown Weapon"
 
     if hammerData[currentWeapon] then
-        DrawHammerDropdown(ui, currentWeapon, "Equipped: " .. weaponNameLabel, staging, onChanged)
+        DrawHammerDropdown(ui, currentWeapon, "Equipped: " .. weaponNameLabel, staging, onChanged, theme)
     end
 end
 
-local function DrawFullHammerTab(ui, staging, onChanged)
-    ui.Spacing()
-    ui.Text("Select the guaranteed first hammer for each aspect.")
-    ui.Spacing()
-
+local function DrawFullHammerTab(ui, staging, onChanged, theme)
     for _, weaponKey in ipairs(weaponDrawOrder) do
         local weaponDisplayName = weaponLabels[weaponKey] or weaponKey
 
@@ -384,33 +387,55 @@ local function DrawFullHammerTab(ui, staging, onChanged)
             if aspects then
                 for _, aspectKey in ipairs(aspects) do
                     local aspectDisplayName = aspectLabels[aspectKey] or aspectKey
-                    DrawHammerDropdown(ui, aspectKey, aspectDisplayName, staging, onChanged)
+                    DrawHammerDropdown(ui, aspectKey, aspectDisplayName, staging, onChanged, theme)
                 end
             end
             ui.Unindent()
         end
     end
-    ui.Spacing()
 end
 
 -- =============================================================================
--- PUBLIC API
+-- STATE (staging driven by lib.createSpecialState, hashing by Core)
+-- =============================================================================
+
+-- Build stateSchema: one dropdown per aspect, nested under config.FirstHammers
+public.definition.stateSchema = {}
+for _, aspectKey in ipairs(aspectDrawOrder) do
+    table.insert(public.definition.stateSchema, {
+        type      = "dropdown",
+        configKey = { "FirstHammers", aspectKey },
+        values    = hammerData[aspectKey].values,
+        bits      = 5,
+        default   = "",
+    })
+end
+
+local staging, snapshotStaging, syncToConfig =
+    lib.createSpecialState(config, public.definition.stateSchema)
+
+-- =============================================================================
+-- PUBLIC API (generic special module contract)
 -- =============================================================================
 
 public.definition.enable = apply
 public.definition.disable = restore
 
-public.hammerData = hammerData
-public.aspectDrawOrder = aspectDrawOrder
-public.aspectLabels = aspectLabels
-public.weaponLabels = weaponLabels
-public.weaponDrawOrder = weaponDrawOrder
-public.WeaponAspectMapping = WeaponAspectMapping
+public.SnapshotStaging    = snapshotStaging
+public.SyncToConfig       = syncToConfig
 
-public.DrawQuickSelect = DrawQuickSelect
-public.DrawFullHammerTab = DrawFullHammerTab
-public.DrawHammerDropdown = DrawHammerDropdown
-public.GetEquippedAspect = GetEquippedAspect
+--- Draw the full tab content (Core renders the enable checkbox above this).
+function public.DrawTab(imgui, onChanged, theme)
+    imgui.Spacing()
+    imgui.Text("Select the guaranteed first hammer for each aspect.")
+    imgui.Spacing()
+    DrawFullHammerTab(imgui, staging, onChanged, theme)
+end
+
+--- Draw quick-access content for the Quick Setup tab.
+function public.DrawQuickContent(imgui, onChanged, theme)
+    DrawQuickSelect(imgui, staging, onChanged, theme)
+end
 
 -- =============================================================================
 -- Wiring
@@ -422,7 +447,7 @@ modutil.once_loaded.game(function()
     loader.load(function()
         import_as_fallback(rom.game)
         registerHooks()
-        if config.Enabled then apply() end
+        if lib.isEnabled(config) then apply() end
     end)
 end)
 
@@ -431,14 +456,13 @@ end)
 -- =============================================================================
 
 local showWindow = false
-local standaloneStaging = { FirstHammers = config.FirstHammers }
 
 local function onStandaloneChanged()
-    config.FirstHammers = standaloneStaging.FirstHammers
+    syncToConfig()
 end
 
 rom.gui.add_imgui(function()
-    if mods['adamant-Core'] then return end
+    if mods['adamant-Modpack_Core'] then return end
     if not showWindow then return end
 
     if rom.ImGui.Begin("First Hammer Selection", true) then
@@ -449,10 +473,13 @@ rom.gui.add_imgui(function()
         end
         rom.ImGui.Separator()
         rom.ImGui.Spacing()
-        DrawQuickSelect(rom.ImGui, standaloneStaging, onStandaloneChanged)
+        DrawQuickSelect(rom.ImGui, staging, onStandaloneChanged)
         rom.ImGui.Spacing()
         rom.ImGui.Separator()
-        DrawFullHammerTab(rom.ImGui, standaloneStaging, onStandaloneChanged)
+        rom.ImGui.Spacing()
+        rom.ImGui.Text("Select the guaranteed first hammer for each aspect.")
+        rom.ImGui.Spacing()
+        DrawFullHammerTab(rom.ImGui, staging, onStandaloneChanged)
         rom.ImGui.End()
     else
         showWindow = false
@@ -460,7 +487,7 @@ rom.gui.add_imgui(function()
 end)
 
 rom.gui.add_to_menu_bar(function()
-    if mods['adamant-Core'] then return end
+    if mods['adamant-Modpack_Core'] then return end
     if rom.ImGui.BeginMenu("adamant") then
         if rom.ImGui.MenuItem("First Hammer Selection") then
             showWindow = not showWindow

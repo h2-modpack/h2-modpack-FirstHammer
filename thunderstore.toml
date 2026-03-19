@@ -7,7 +7,7 @@ namespace = "adamant"
 name = "FirstHammer"
 versionNumber = "1.0.0"
 description = "Select the guaranteed first hammer for each weapon aspect."
-websiteUrl = "https://github.com/maybe-adamant/h2-pack-FirstHammer"
+websiteUrl = "https://github.com/maybe-adamant/h2-modpack-FirstHammer"
 containsNsfwContent = false
 
 [package.dependencies]
