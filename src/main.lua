@@ -406,7 +406,6 @@ for _, aspectKey in ipairs(aspectDrawOrder) do
         type      = "dropdown",
         configKey = { "FirstHammers", aspectKey },
         values    = hammerData[aspectKey].values,
-        bits      = 5,
         default   = "",
     })
 end
