@@ -1,5 +1,6 @@
 return {
     Enabled = false,
+    DebugMode = false,
 
     -- Per-aspect first hammer selection ("" = random)
     FirstHammers = {
