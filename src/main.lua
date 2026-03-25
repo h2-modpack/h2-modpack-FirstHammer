@@ -13,6 +13,8 @@ local lib = mods['adamant-Modpack_Lib']
 config = chalk.auto('config.lua')
 public.config = config
 
+local ImGuiCol = rom.ImGuiCol
+
 local _, revert = lib.createBackupSystem()
 
 -- =============================================================================
@@ -307,6 +309,9 @@ end
 -- UI RENDERING (exposed via public for adamant-core or standalone ImGui)
 -- =============================================================================
 
+local DEFAULT_LABEL_OFFSET = 0.25
+local DEFAULT_FIELD_MEDIUM  = 0.4
+
 local hasLocalizedLabels = false
 
 local function BuildLocalizedLabels()
@@ -324,39 +329,27 @@ local function BuildLocalizedLabels()
     hasLocalizedLabels = true
 end
 
---- Optional theme table (Core.Theme when hosted, nil when standalone).
---- Modules pick the keys they need, falling back to baked-in defaults.
-local function DrawHammerDropdown(ui, aspectKey, displayLabel, staging, onChanged, theme)
+-- labelOffset and fieldMedium are pre-unpacked by the caller (no theme param).
+local function DrawHammerDropdown(ui, aspectKey, displayLabel, staging, onChanged, labelOffset, fieldMedium)
     local data = hammerData[aspectKey]
     if not data then return end
-
-    if not hasLocalizedLabels then
-        BuildLocalizedLabels()
-    end
-
-    local labelOffset = (theme and theme.LABEL_OFFSET) or 0.25
-    local fieldWidth  = (theme and theme.FIELD_MEDIUM)  or 0.4
+    if not hasLocalizedLabels then BuildLocalizedLabels() end
 
     local currentId = staging.FirstHammers[aspectKey] or ""
     local currentIndex = 1
     for i, val in ipairs(data.values) do
-        if val == currentId then
-            currentIndex = i
-            break
-        end
+        if val == currentId then currentIndex = i; break end
     end
-
     local currentPreview = data.labels[currentIndex] or "None (Random)"
 
     ui.PushID(aspectKey)
     ui.Text(displayLabel)
     ui.SameLine()
     ui.SetCursorPosX(ui.GetWindowWidth() * labelOffset)
-    ui.PushItemWidth(ui.GetWindowWidth() * fieldWidth)
+    ui.PushItemWidth(ui.GetWindowWidth() * fieldMedium)
     if ui.BeginCombo("##HammerCombo", currentPreview) then
         for i, txt in ipairs(data.labels) do
-            local isSelected = (i == currentIndex)
-            if ui.Selectable(txt, isSelected) then
+            if ui.Selectable(txt, i == currentIndex) then
                 if i ~= currentIndex then
                     staging.FirstHammers[aspectKey] = data.values[i]
                     if onChanged then onChanged() end
@@ -369,30 +362,28 @@ local function DrawHammerDropdown(ui, aspectKey, displayLabel, staging, onChange
     ui.PopID()
 end
 
-local function DrawQuickSelect(ui, staging, onChanged, theme)
-    local currentWeapon = GetEquippedAspect()
-    local weaponNameLabel = aspectLabels[currentWeapon] or "Unknown Weapon"
-
-    if hammerData[currentWeapon] then
-        DrawHammerDropdown(ui, currentWeapon, "Equipped: " .. weaponNameLabel, staging, onChanged, theme)
-    end
-end
-
-local function DrawFullHammerTab(ui, staging, onChanged, theme)
+-- headerColor is nil when no theme is active (uses current ImGuiCol.Text as-is).
+local function DrawFullHammerTab(ui, staging, onChanged, headerColor, labelOffset, fieldMedium)
     for _, weaponKey in ipairs(weaponDrawOrder) do
         local weaponDisplayName = weaponLabels[weaponKey] or weaponKey
-
-        if ui.CollapsingHeader(weaponDisplayName) then
+        ui.PushStyleColor(ImGuiCol.Text, table.unpack(headerColor))
+        local open = ui.CollapsingHeader(weaponDisplayName)
+        ui.PopStyleColor()
+        if open then
             ui.Indent()
-            local aspects = WeaponAspectMapping[weaponKey]
-            if aspects then
-                for _, aspectKey in ipairs(aspects) do
-                    local aspectDisplayName = aspectLabels[aspectKey] or aspectKey
-                    DrawHammerDropdown(ui, aspectKey, aspectDisplayName, staging, onChanged, theme)
-                end
+            for _, aspectKey in ipairs(WeaponAspectMapping[weaponKey] or {}) do
+                DrawHammerDropdown(ui, aspectKey, aspectLabels[aspectKey] or aspectKey, staging, onChanged, labelOffset, fieldMedium)
             end
             ui.Unindent()
         end
+    end
+end
+
+local function DrawQuickSelect(ui, staging, onChanged, labelOffset, fieldMedium)
+    local currentWeapon = GetEquippedAspect()
+    local weaponNameLabel = aspectLabels[currentWeapon] or "Unknown Weapon"
+    if hammerData[currentWeapon] then
+        DrawHammerDropdown(ui, currentWeapon, "Equipped: " .. weaponNameLabel, staging, onChanged, labelOffset, fieldMedium)
     end
 end
 
@@ -425,16 +416,20 @@ public.SnapshotStaging    = snapshotStaging
 public.SyncToConfig       = syncToConfig
 
 --- Draw the full tab content (Core renders the enable checkbox above this).
-function public.DrawTab(imgui, onChanged, theme)
-    imgui.Spacing()
-    imgui.Text("Select the guaranteed first hammer for each aspect.")
-    imgui.Spacing()
-    DrawFullHammerTab(imgui, staging, onChanged, theme)
+function public.DrawTab(ui, onChanged, theme)
+    local colors      = theme and theme.colors
+    local headerColor = (colors and colors.info) or {1, 1, 1, 1}
+    local fieldMedium = (theme and theme.FIELD_MEDIUM) or DEFAULT_FIELD_MEDIUM
+    ui.Spacing()
+    ui.TextColored(headerColor[1], headerColor[2], headerColor[3], headerColor[4], "Select the guaranteed first hammer for each aspect.")
+    ui.Spacing()
+    DrawFullHammerTab(ui, staging, onChanged, headerColor, DEFAULT_LABEL_OFFSET, fieldMedium)
 end
 
 --- Draw quick-access content for the Quick Setup tab.
-function public.DrawQuickContent(imgui, onChanged, theme)
-    DrawQuickSelect(imgui, staging, onChanged, theme)
+function public.DrawQuickContent(ui, onChanged, theme)
+    local fieldMedium = (theme and theme.FIELD_MEDIUM) or DEFAULT_FIELD_MEDIUM
+    DrawQuickSelect(ui, staging, onChanged, DEFAULT_LABEL_OFFSET, fieldMedium)
 end
 
 -- =============================================================================
@@ -461,6 +456,7 @@ local function onStandaloneChanged()
     syncToConfig()
 end
 
+---@diagnostic disable-next-line: redundant-parameter
 rom.gui.add_imgui(function()
     if mods['adamant-Modpack_Core'] then return end
     if not showWindow then return end
@@ -473,19 +469,17 @@ rom.gui.add_imgui(function()
         end
         rom.ImGui.Separator()
         rom.ImGui.Spacing()
-        DrawQuickSelect(rom.ImGui, staging, onStandaloneChanged)
+        public.DrawQuickContent(rom.ImGui, onStandaloneChanged, nil)
         rom.ImGui.Spacing()
         rom.ImGui.Separator()
-        rom.ImGui.Spacing()
-        rom.ImGui.Text("Select the guaranteed first hammer for each aspect.")
-        rom.ImGui.Spacing()
-        DrawFullHammerTab(rom.ImGui, staging, onStandaloneChanged)
+        public.DrawTab(rom.ImGui, onStandaloneChanged, nil)
         rom.ImGui.End()
     else
         showWindow = false
     end
 end)
 
+---@diagnostic disable-next-line: redundant-parameter
 rom.gui.add_to_menu_bar(function()
     if mods['adamant-Modpack_Core'] then return end
     if rom.ImGui.BeginMenu("adamant") then
