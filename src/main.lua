@@ -263,7 +263,7 @@ end
 
 local function registerHooks()
     modutil.mod.Path.Wrap("StartNewRun", function(baseFunc, prevRun, args)
-        if lib.isEnabled(config) then
+        if lib.isEnabled(config, public.definition.modpack) then
             hasForcedHammerThisRun = false
         end
         return baseFunc(prevRun, args)
@@ -272,7 +272,7 @@ local function registerHooks()
     modutil.mod.Path.Wrap("SetTraitsOnLoot", function(baseFunc, lootData, args)
         baseFunc(lootData, args)
 
-        if not lib.isEnabled(config) then return end
+        if not lib.isEnabled(config, public.definition.modpack) then return end
         if lootData.Name ~= "WeaponUpgrade" or hasForcedHammerThisRun then return end
 
         local currentWeapon = GetEquippedAspect()
@@ -290,7 +290,7 @@ local function registerHooks()
 
     modutil.mod.Path.Wrap("AddTraitToHero", function(baseFunc, args)
         args = args or {}
-        if not lib.isEnabled(config) then return baseFunc(args) end
+        if not lib.isEnabled(config, public.definition.modpack) then return baseFunc(args) end
 
         local traitName = args.TraitData and args.TraitData.Name
         if traitName then
@@ -447,7 +447,7 @@ modutil.once_loaded.game(function()
     loader.load(function()
         import_as_fallback(rom.game)
         registerHooks()
-        if lib.isEnabled(config) then apply() end
+        if lib.isEnabled(config, public.definition.modpack) then apply() end
     end)
 end)
 
@@ -463,7 +463,7 @@ end
 
 ---@diagnostic disable-next-line: redundant-parameter
 rom.gui.add_imgui(function()
-    if mods['adamant-Modpack_Core'] then return end
+    if lib.isCoordinated(public.definition.modpack) then return end
     if not showWindow then return end
 
     if rom.ImGui.Begin("First Hammer Selection", true) then
@@ -486,7 +486,7 @@ end)
 
 ---@diagnostic disable-next-line: redundant-parameter
 rom.gui.add_to_menu_bar(function()
-    if mods['adamant-Modpack_Core'] then return end
+    if lib.isCoordinated(public.definition.modpack) then return end
     if rom.ImGui.BeginMenu("adamant") then
         if rom.ImGui.MenuItem("First Hammer Selection") then
             showWindow = not showWindow
