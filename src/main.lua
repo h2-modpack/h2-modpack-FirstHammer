@@ -306,7 +306,7 @@ local function registerHooks()
 end
 
 -- =============================================================================
--- UI RENDERING (exposed via public for adamantcoordinator or standalone ImGui)
+-- UI RENDERING (exposed via public for coordinator or standalone ImGui)
 -- =============================================================================
 
 local DEFAULT_LABEL_OFFSET = 0.25
@@ -330,12 +330,12 @@ local function BuildLocalizedLabels()
 end
 
 -- labelOffset and fieldMedium are pre-unpacked by the caller (no theme param).
-local function DrawHammerDropdown(ui, aspectKey, displayLabel, staging, onChanged, labelOffset, fieldMedium)
+local function DrawHammerDropdown(ui, aspectKey, displayLabel, specialState, labelOffset, fieldMedium)
     local data = hammerData[aspectKey]
     if not data then return end
     if not hasLocalizedLabels then BuildLocalizedLabels() end
 
-    local currentId = staging.FirstHammers[aspectKey] or ""
+    local currentId = specialState.view.FirstHammers[aspectKey] or ""
     local currentIndex = 1
     for i, val in ipairs(data.values) do
         if val == currentId then
@@ -353,8 +353,7 @@ local function DrawHammerDropdown(ui, aspectKey, displayLabel, staging, onChange
         for i, txt in ipairs(data.labels) do
             if ui.Selectable(txt, i == currentIndex) then
                 if i ~= currentIndex then
-                    staging.FirstHammers[aspectKey] = data.values[i]
-                    if onChanged then onChanged() end
+                    specialState.set({ "FirstHammers", aspectKey }, data.values[i])
                 end
             end
         end
@@ -365,7 +364,7 @@ local function DrawHammerDropdown(ui, aspectKey, displayLabel, staging, onChange
 end
 
 -- headerColor is nil when no theme is active (uses current ImGuiCol.Text as-is).
-local function DrawFullHammerTab(ui, staging, onChanged, headerColor, labelOffset, fieldMedium)
+local function DrawFullHammerTab(ui, specialState, headerColor, labelOffset, fieldMedium)
     for _, weaponKey in ipairs(weaponDrawOrder) do
         local weaponDisplayName = weaponLabels[weaponKey] or weaponKey
         ui.PushStyleColor(ImGuiCol.Text, table.unpack(headerColor))
@@ -374,7 +373,7 @@ local function DrawFullHammerTab(ui, staging, onChanged, headerColor, labelOffse
         if open then
             ui.Indent()
             for _, aspectKey in ipairs(WeaponAspectMapping[weaponKey] or {}) do
-                DrawHammerDropdown(ui, aspectKey, aspectLabels[aspectKey] or aspectKey, staging, onChanged, labelOffset,
+                DrawHammerDropdown(ui, aspectKey, aspectLabels[aspectKey] or aspectKey, specialState, labelOffset,
                     fieldMedium)
             end
             ui.Unindent()
@@ -382,17 +381,17 @@ local function DrawFullHammerTab(ui, staging, onChanged, headerColor, labelOffse
     end
 end
 
-local function DrawQuickSelect(ui, staging, onChanged, labelOffset, fieldMedium)
+local function DrawQuickSelect(ui, specialState, labelOffset, fieldMedium)
     local currentWeapon = GetEquippedAspect()
     local weaponNameLabel = aspectLabels[currentWeapon] or "Unknown Weapon"
     if hammerData[currentWeapon] then
-        DrawHammerDropdown(ui, currentWeapon, "Equipped: " .. weaponNameLabel, staging, onChanged, labelOffset,
+        DrawHammerDropdown(ui, currentWeapon, "Equipped: " .. weaponNameLabel, specialState, labelOffset,
             fieldMedium)
     end
 end
 
 -- =============================================================================
--- STATE (staging driven by lib.createSpecialState, hashing by Core)
+-- STATE (managed special state driven by lib.createSpecialState, hashing by Core)
 -- =============================================================================
 
 -- Build stateSchema: one dropdown per aspect, nested under config.FirstHammers
@@ -406,8 +405,7 @@ for _, aspectKey in ipairs(aspectDrawOrder) do
     })
 end
 
-local staging, snapshotStaging, syncToConfig =
-    lib.createSpecialState(config, public.definition.stateSchema)
+local managedSpecialState = lib.createSpecialState(config, public.definition.stateSchema)
 
 -- =============================================================================
 -- PUBLIC API (generic special module contract)
@@ -415,12 +413,10 @@ local staging, snapshotStaging, syncToConfig =
 
 public.definition.apply                      = apply
 public.definition.revert                     = revert
-
-public.SnapshotStaging                       = snapshotStaging
-public.SyncToConfig                          = syncToConfig
+public.specialState                          = managedSpecialState
 
 --- Draw the full tab content (Core renders the enable checkbox above this).
-function public.DrawTab(ui, onChanged, theme)
+function public.DrawTab(ui, specialState, theme)
     local colors      = theme and theme.colors
     local headerColor = (colors and colors.info) or { 1, 1, 1, 1 }
     local fieldMedium = (theme and theme.FIELD_MEDIUM) or DEFAULT_FIELD_MEDIUM
@@ -428,13 +424,13 @@ function public.DrawTab(ui, onChanged, theme)
     ui.TextColored(headerColor[1], headerColor[2], headerColor[3], headerColor[4],
         "Select the guaranteed first hammer for each aspect.")
     ui.Spacing()
-    DrawFullHammerTab(ui, staging, onChanged, headerColor, DEFAULT_LABEL_OFFSET, fieldMedium)
+    DrawFullHammerTab(ui, specialState, headerColor, DEFAULT_LABEL_OFFSET, fieldMedium)
 end
 
 --- Draw quick-access content for the Quick Setup tab.
-function public.DrawQuickContent(ui, onChanged, theme)
+function public.DrawQuickContent(ui, specialState, theme)
     local fieldMedium = (theme and theme.FIELD_MEDIUM) or DEFAULT_FIELD_MEDIUM
-    DrawQuickSelect(ui, staging, onChanged, DEFAULT_LABEL_OFFSET, fieldMedium)
+    DrawQuickSelect(ui, specialState, DEFAULT_LABEL_OFFSET, fieldMedium)
 end
 
 -- =============================================================================
@@ -457,8 +453,15 @@ end)
 
 local showWindow = false
 
-local function onStandaloneChanged()
-    syncToConfig()
+local function warnIfStandaloneBypassedState(before)
+    lib.warnIfSpecialConfigBypassedState(
+        public.definition.name,
+        config.DebugMode,
+        public.specialState,
+        config,
+        public.definition.stateSchema,
+        before
+    )
 end
 
 ---@diagnostic disable-next-line: redundant-parameter
@@ -474,10 +477,16 @@ rom.gui.add_imgui(function()
         end
         rom.ImGui.Separator()
         rom.ImGui.Spacing()
-        public.DrawQuickContent(rom.ImGui, onStandaloneChanged, nil)
+        local beforeQuick = lib.captureSpecialConfigSnapshot(config, public.definition.stateSchema)
+        public.DrawQuickContent(rom.ImGui, public.specialState, nil)
+        warnIfStandaloneBypassedState(beforeQuick)
+        if public.specialState.isDirty() then public.specialState.flushToConfig() end
         rom.ImGui.Spacing()
         rom.ImGui.Separator()
-        public.DrawTab(rom.ImGui, onStandaloneChanged, nil)
+        local beforeTab = lib.captureSpecialConfigSnapshot(config, public.definition.stateSchema)
+        public.DrawTab(rom.ImGui, public.specialState, nil)
+        warnIfStandaloneBypassedState(beforeTab)
+        if public.specialState.isDirty() then public.specialState.flushToConfig() end
         rom.ImGui.End()
     else
         showWindow = false
