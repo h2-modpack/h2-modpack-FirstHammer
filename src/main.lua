@@ -15,8 +15,6 @@ public.config = config
 
 local ImGuiCol = rom.ImGuiCol
 
-local _, revert = lib.createBackupSystem()
-
 -- =============================================================================
 -- MODULE DEFINITION
 -- =============================================================================
@@ -30,7 +28,7 @@ public.definition = {
     tooltip       = "Select the guaranteed first hammer for each weapon aspect.",
     default       = false,
     special       = true,
-    dataMutation  = false,
+    affectsRunData = false,
     modpack = "speedrun",
     -- stateSchema is set below after data tables are built
 }
@@ -258,12 +256,9 @@ end
 
 local hasForcedHammerThisRun = false
 
-local function apply()
-end
-
 local function registerHooks()
     modutil.mod.Path.Wrap("StartNewRun", function(baseFunc, prevRun, args)
-        if lib.isEnabled(config, public.definition.modpack) then
+        if lib.isEnabled(public.store, public.definition.modpack) then
             hasForcedHammerThisRun = false
         end
         return baseFunc(prevRun, args)
@@ -272,7 +267,7 @@ local function registerHooks()
     modutil.mod.Path.Wrap("SetTraitsOnLoot", function(baseFunc, lootData, args)
         baseFunc(lootData, args)
 
-        if not lib.isEnabled(config, public.definition.modpack) then return end
+        if not lib.isEnabled(public.store, public.definition.modpack) then return end
         if lootData.Name ~= "WeaponUpgrade" or hasForcedHammerThisRun then return end
 
         local currentWeapon = GetEquippedAspect()
@@ -290,7 +285,7 @@ local function registerHooks()
 
     modutil.mod.Path.Wrap("AddTraitToHero", function(baseFunc, args)
         args = args or {}
-        if not lib.isEnabled(config, public.definition.modpack) then return baseFunc(args) end
+        if not lib.isEnabled(public.store, public.definition.modpack) then return baseFunc(args) end
 
         local traitName = args.TraitData and args.TraitData.Name
         if traitName then
@@ -329,13 +324,12 @@ local function BuildLocalizedLabels()
     hasLocalizedLabels = true
 end
 
--- labelOffset and fieldMedium are pre-unpacked by the caller (no theme param).
-local function DrawHammerDropdown(ui, aspectKey, displayLabel, specialState, labelOffset, fieldMedium)
+local function DrawHammerDropdown(ui, aspectKey, displayLabel, uiState, labelOffset, fieldMedium)
     local data = hammerData[aspectKey]
     if not data then return end
     if not hasLocalizedLabels then BuildLocalizedLabels() end
 
-    local currentId = specialState.view.FirstHammers[aspectKey] or ""
+    local currentId = uiState.view.FirstHammers[aspectKey] or ""
     local currentIndex = 1
     for i, val in ipairs(data.values) do
         if val == currentId then
@@ -353,7 +347,7 @@ local function DrawHammerDropdown(ui, aspectKey, displayLabel, specialState, lab
         for i, txt in ipairs(data.labels) do
             if ui.Selectable(txt, i == currentIndex) then
                 if i ~= currentIndex then
-                    specialState.set({ "FirstHammers", aspectKey }, data.values[i])
+                    uiState.set({ "FirstHammers", aspectKey }, data.values[i])
                 end
             end
         end
@@ -364,7 +358,7 @@ local function DrawHammerDropdown(ui, aspectKey, displayLabel, specialState, lab
 end
 
 -- headerColor is nil when no theme is active (uses current ImGuiCol.Text as-is).
-local function DrawFullHammerTab(ui, specialState, headerColor, labelOffset, fieldMedium)
+local function DrawFullHammerTab(ui, uiState, headerColor, labelOffset, fieldMedium)
     for _, weaponKey in ipairs(weaponDrawOrder) do
         local weaponDisplayName = weaponLabels[weaponKey] or weaponKey
         ui.PushStyleColor(ImGuiCol.Text, table.unpack(headerColor))
@@ -373,7 +367,7 @@ local function DrawFullHammerTab(ui, specialState, headerColor, labelOffset, fie
         if open then
             ui.Indent()
             for _, aspectKey in ipairs(WeaponAspectMapping[weaponKey] or {}) do
-                DrawHammerDropdown(ui, aspectKey, aspectLabels[aspectKey] or aspectKey, specialState, labelOffset,
+                DrawHammerDropdown(ui, aspectKey, aspectLabels[aspectKey] or aspectKey, uiState, labelOffset,
                     fieldMedium)
             end
             ui.Unindent()
@@ -381,17 +375,17 @@ local function DrawFullHammerTab(ui, specialState, headerColor, labelOffset, fie
     end
 end
 
-local function DrawQuickSelect(ui, specialState, labelOffset, fieldMedium)
+local function DrawQuickSelect(ui, uiState, labelOffset, fieldMedium)
     local currentWeapon = GetEquippedAspect()
     local weaponNameLabel = aspectLabels[currentWeapon] or "Unknown Weapon"
     if hammerData[currentWeapon] then
-        DrawHammerDropdown(ui, currentWeapon, "Equipped: " .. weaponNameLabel, specialState, labelOffset,
+        DrawHammerDropdown(ui, currentWeapon, "Equipped: " .. weaponNameLabel, uiState, labelOffset,
             fieldMedium)
     end
 end
 
 -- =============================================================================
--- STATE (managed special state driven by lib.createSpecialState, hashing by Core)
+-- STATE (managed uiState driven by lib.createStore, hashing by Core)
 -- =============================================================================
 
 -- Build stateSchema: one dropdown per aspect, nested under config.FirstHammers
@@ -405,18 +399,14 @@ for _, aspectKey in ipairs(aspectDrawOrder) do
     })
 end
 
-local managedSpecialState = lib.createSpecialState(config, public.definition.stateSchema)
+public.store = lib.createStore(config, public.definition)
 
 -- =============================================================================
 -- PUBLIC API (generic special module contract)
 -- =============================================================================
 
-public.definition.apply                      = apply
-public.definition.revert                     = revert
-public.specialState                          = managedSpecialState
-
 --- Draw the full tab content (Core renders the enable checkbox above this).
-function public.DrawTab(ui, specialState, theme)
+function public.DrawTab(ui, uiState, theme)
     local colors      = theme and theme.colors
     local headerColor = (colors and colors.info) or { 1, 1, 1, 1 }
     local fieldMedium = (theme and theme.FIELD_MEDIUM) or DEFAULT_FIELD_MEDIUM
@@ -424,13 +414,13 @@ function public.DrawTab(ui, specialState, theme)
     ui.TextColored(headerColor[1], headerColor[2], headerColor[3], headerColor[4],
         "Select the guaranteed first hammer for each aspect.")
     ui.Spacing()
-    DrawFullHammerTab(ui, specialState, headerColor, DEFAULT_LABEL_OFFSET, fieldMedium)
+    DrawFullHammerTab(ui, uiState, headerColor, DEFAULT_LABEL_OFFSET, fieldMedium)
 end
 
 --- Draw quick-access content for the Quick Setup tab.
-function public.DrawQuickContent(ui, specialState, theme)
+function public.DrawQuickContent(ui, uiState, theme)
     local fieldMedium = (theme and theme.FIELD_MEDIUM) or DEFAULT_FIELD_MEDIUM
-    DrawQuickSelect(ui, specialState, DEFAULT_LABEL_OFFSET, fieldMedium)
+    DrawQuickSelect(ui, uiState, DEFAULT_LABEL_OFFSET, fieldMedium)
 end
 
 -- =============================================================================
@@ -439,67 +429,30 @@ end
 
 local loader = reload.auto_single()
 
+local function init()
+    import_as_fallback(rom.game)
+    registerHooks()
+    if lib.isEnabled(public.store, public.definition.modpack) then
+        lib.applyDefinition(public.definition, public.store)
+    end
+end
+
 modutil.once_loaded.game(function()
-    loader.load(function()
-        import_as_fallback(rom.game)
-        registerHooks()
-        if lib.isEnabled(config, public.definition.modpack) then apply() end
-    end)
+    loader.load(init, init)
 end)
 
 -- =============================================================================
 -- STANDALONE UI
 -- =============================================================================
 
-local showWindow = false
+local standalone = lib.standaloneSpecialUI(public.definition, public.store, public.store.uiState, {
+    getDrawQuickContent = function()
+        return public.DrawQuickContent
+    end,
+    getDrawTab = function()
+        return public.DrawTab
+    end,
+})
 
-local function warnIfStandaloneBypassedState(before)
-    lib.warnIfSpecialConfigBypassedState(
-        public.definition.name,
-        config.DebugMode,
-        public.specialState,
-        config,
-        public.definition.stateSchema,
-        before
-    )
-end
-
----@diagnostic disable-next-line: redundant-parameter
-rom.gui.add_imgui(function()
-    if lib.isCoordinated(public.definition.modpack) then return end
-    if not showWindow then return end
-
-    if rom.ImGui.Begin("First Hammer Selection", true) then
-        local val, chg = rom.ImGui.Checkbox("Enabled", config.Enabled)
-        if chg then
-            config.Enabled = val
-            if val then apply() else revert() end
-        end
-        rom.ImGui.Separator()
-        rom.ImGui.Spacing()
-        local beforeQuick = lib.captureSpecialConfigSnapshot(config, public.definition.stateSchema)
-        public.DrawQuickContent(rom.ImGui, public.specialState, nil)
-        warnIfStandaloneBypassedState(beforeQuick)
-        if public.specialState.isDirty() then public.specialState.flushToConfig() end
-        rom.ImGui.Spacing()
-        rom.ImGui.Separator()
-        local beforeTab = lib.captureSpecialConfigSnapshot(config, public.definition.stateSchema)
-        public.DrawTab(rom.ImGui, public.specialState, nil)
-        warnIfStandaloneBypassedState(beforeTab)
-        if public.specialState.isDirty() then public.specialState.flushToConfig() end
-        rom.ImGui.End()
-    else
-        showWindow = false
-    end
-end)
-
----@diagnostic disable-next-line: redundant-parameter
-rom.gui.add_to_menu_bar(function()
-    if lib.isCoordinated(public.definition.modpack) then return end
-    if rom.ImGui.BeginMenu("adamant") then
-        if rom.ImGui.MenuItem("First Hammer Selection") then
-            showWindow = not showWindow
-        end
-        rom.ImGui.EndMenu()
-    end
-end)
+rom.gui.add_imgui(standalone.renderWindow)
+rom.gui.add_to_menu_bar(standalone.addMenuBar)
