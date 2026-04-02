@@ -8,7 +8,10 @@ globals = {
     "game",
     "chalk",
     "reload",
-    "_PLUGIN"
+    "_PLUGIN",
+    "FirstHammerInternal",
+    "lib",
+    "store",
     }
 read_globals = {
     "imgui",
@@ -17,5 +20,5 @@ read_globals = {
     "CurrentRun",
     "TraitData",
     "IsTraitEligible",
-    "GetDisplayName"
+    "GetDisplayName",
     }
