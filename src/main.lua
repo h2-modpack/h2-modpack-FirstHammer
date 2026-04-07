@@ -9,6 +9,7 @@ modutil = mods['SGG_Modding-ModUtil']
 local chalk = mods['SGG_Modding-Chalk']
 local reload = mods['SGG_Modding-ReLoad']
 lib = mods['adamant-ModpackLib']
+
 local dataDefaults = import("config.lua")
 local config = chalk.auto('config.lua')
 
@@ -17,11 +18,11 @@ local internal = FirstHammerInternal
 
 public.definition = {
     id = "FirstHammer",
-    name = "First Hammer Selection",
-    category = "Run Modifiers",
-    group = "Hammers",
+    name = "Hammer Selection",
+    shortName = "Select your first hammer",
+    category = "Hammer Selection",
     tooltip = "Select the guaranteed first hammer for each weapon aspect.",
-    default = false,
+    default = dataDefaults.Enabled,
     affectsRunData = false,
     modpack = "speedrun",
 }
