@@ -23,14 +23,14 @@ end
 local hasForcedHammerThisRun = false
 
 function internal.RegisterHooks()
-    modutil.mod.Path.Wrap("StartNewRun", function(baseFunc, prevRun, args)
+    lib.hooks.Wrap(internal, "StartNewRun", function(baseFunc, prevRun, args)
         if lib.isModuleEnabled(internal.store, public.definition.modpack) then
             hasForcedHammerThisRun = false
         end
         return baseFunc(prevRun, args)
     end)
 
-    modutil.mod.Path.Wrap("SetTraitsOnLoot", function(baseFunc, lootData, args)
+    lib.hooks.Wrap(internal, "SetTraitsOnLoot", function(baseFunc, lootData, args)
         baseFunc(lootData, args)
 
         if not lib.isModuleEnabled(internal.store, public.definition.modpack) then return end
@@ -49,7 +49,7 @@ function internal.RegisterHooks()
         end
     end)
 
-    modutil.mod.Path.Wrap("AddTraitToHero", function(baseFunc, args)
+    lib.hooks.Wrap(internal, "AddTraitToHero", function(baseFunc, args)
         args = args or {}
         if not lib.isModuleEnabled(internal.store, public.definition.modpack) then return baseFunc(args) end
 
